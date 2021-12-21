@@ -1,0 +1,56 @@
+name: Backup
+on:
+  schedule:
+    - cron: "10 10 1-31/2 * *"
+  push:
+    branches:
+      - main
+
+env:
+  repos: "Fndroid/clash_for_windows_pkg"
+
+jobs:
+  build:
+    name: Backup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backup
+        run: |
+          latest_version=$(curl -H "Accept: application/vnd.github.v3+json" -H "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36" \
+          -s "https://api.github.com/repos/$repos/releases/latest" --connect-timeout 10 | grep  -m1 "tag_name" | cut -d\" -f4)
+          latest_pre_release_version=$(curl -H "Accept: application/vnd.github.v3+json" -H "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36" \
+          -s "https://api.github.com/repos/$repos/tags" --connect-timeout 10 | grep  -m1 "name" | cut -d\" -f4)
+          if [[ $latest_version != $latest_pre_release_version ]]; then
+            latest_version=$latest_pre_release_version
+          fi
+          echo $latest_version
+          that_repos_releases_url="https://api.github.com/repos/$repos/releases"
+          self_repos_tag_url="https://api.github.com/repos/${{ github.repository }}/tags"
+          if_found=`curl -H "Accept: application/vnd.github.v3+json" -H "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36" -s $self_repos_tag_url --connect-timeout 5 | grep "\"name\"\: \"$latest_version\""` || true
+          if [ -z ${if_found} ]; then
+            rm -fr *
+            for file in $(curl -H "Accept: application/vnd.github.v3+json" -H "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36" -sSL $that_repos_releases_url | grep 'browser_download_url' | cut -d\" -f4); do
+              if [[ $file == *Clash.for.Windows-${latest_version}-arm64.dmg ]]; then
+                wget -q $file &> /dev/null
+              fi
+            done
+            7z -v20m a -t7z Clash.for.Windows-$(date +"%Y-%m-%d").7z Clash.for.Windows-${latest_version}-arm64.dmg
+            #zip -s 20m Clash.for.Windows-$(date +"%Y-%m-%d").zip Clash.for.Windows-${latest_version}-arm64.dmg
+            rm -r Clash.for.Windows-${latest_version}-arm64.dmg
+            echo -e "|    Size   |     DL  | sha512sum |\n|  ---  |  ---  |  ---  |" > README.md
+            shopt -s extglob
+            for file in $(ls !(*.md)); do
+            echo "| $(expr $(wc -c < $file )  / 1000000  | numfmt --to=iec-i --suffix=MB --format="%f") | [$file](https://cdn.jsdelivr.net/gh/${{ github.repository }}@main/$file) | $(sha512sum  $file | cut -d " " -f1 ) |" >> README.md
+            done
+            mkdir -p .github/workflows
+            wget -qO .github/workflows/Backup.yml https://github.com/${{ github.repository }}/raw/main/.github/workflows/Backup.yml
+            git config --global init.defaultBranch main
+            git init
+            git add .
+            git config user.name "appleians"
+            git config user.email "77714325+appleians@users.noreply.github.com"
+            git commit -m "Version ${latest_version}"
+            git tag -a "$(date +"%Y-%m-%d")" -m "$(date +"%Y-%d-%m")"
+            git remote add release "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+            git push -u --follow-tags release main -f
+          fi
